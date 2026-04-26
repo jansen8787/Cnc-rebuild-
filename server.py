@@ -1,79 +1,64 @@
 from flask import Flask, request, jsonify, send_from_directory
 from pathlib import Path
-import sys
+import tempfile
 import traceback
-import uuid
 import os
+import json
 
 app = Flask(__name__, static_folder=".", static_url_path="")
-
-MODULE2_DIR = Path(__file__).resolve().parent / "module2"
-sys.path.insert(0, str(MODULE2_DIR))
-
-try:
-    from main import run_pipeline
-except Exception as e:
-    run_pipeline = None
-    IMPORT_ERROR = str(e)
-
-
-def clean(obj):
-    if isinstance(obj, Path):
-        return str(obj)
-    if isinstance(obj, dict):
-        return {k: clean(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [clean(v) for v in obj]
-    try:
-        import numpy as np
-        if isinstance(obj, np.generic):
-            return obj.item()
-    except:
-        pass
-    return obj
-
 
 @app.route("/")
 def home():
     return send_from_directory(".", "index.html")
 
 
-@app.route("/api/health")
-def health():
-    return jsonify({"status": "online"})
-
-
 @app.route("/api/recognize", methods=["POST"])
 def recognize():
-    if run_pipeline is None:
-        return jsonify({"error": IMPORT_ERROR}), 500
 
     if "file" not in request.files:
-        return jsonify({"error": "Keine Datei hochgeladen"}), 400
+        return jsonify({"error": "Keine Datei empfangen"}), 400
 
-    file = request.files["file"]
+    uploaded = request.files["file"]
 
-    ext = Path(file.filename).suffix
-    temp = Path("/tmp") / f"{uuid.uuid4()}{ext}"
+    if uploaded.filename == "":
+        return jsonify({"error": "Keine Datei gewählt"}), 400
+
+    temp_path = None
 
     try:
-        file.save(str(temp))
+        suffix = Path(uploaded.filename).suffix or ".tmp"
 
-        result = run_pipeline(temp)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            uploaded.save(tmp.name)
+            temp_path = Path(tmp.name)
 
-        return jsonify(clean(result))
+        from module2.main import run_pipeline
+
+        result = run_pipeline(temp_path)
+
+        try:
+            return jsonify(result)
+        except:
+            return jsonify({
+                "success": True,
+                "raw_result": str(result)
+            })
 
     except Exception as e:
         return jsonify({
-            "error": str(e),
+            "error": "Serverfehler",
             "type": type(e).__name__,
-            "trace": traceback.format_exc()
+            "message": str(e),
+            "traceback": traceback.format_exc()
         }), 500
 
     finally:
-        if temp.exists():
-            os.remove(temp)
+        try:
+            if temp_path and temp_path.exists():
+                os.remove(temp_path)
+        except:
+            pass
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=10000)
