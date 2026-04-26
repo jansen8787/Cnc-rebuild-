@@ -1,12 +1,177 @@
 <!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CNC AI — Drawing Recognition</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>CNC AI Recognizer</title>
+
+<style>
+*{
+margin:0;
+padding:0;
+box-sizing:border-box;
+font-family:Arial,Helvetica,sans-serif;
+}
+
+body{
+background:#0f0f0f;
+color:white;
+padding:20px;
+}
+
+.wrap{
+max-width:700px;
+margin:auto;
+}
+
+.card{
+background:#181818;
+border-radius:22px;
+padding:24px;
+margin-bottom:22px;
+}
+
+h1{
+font-size:54px;
+margin-bottom:18px;
+font-weight:800;
+}
+
+.sub{
+font-size:18px;
+color:#cfcfcf;
+margin-bottom:24px;
+}
+
+input[type=file]{
+width:100%;
+background:#222;
+padding:14px;
+border-radius:14px;
+color:white;
+margin-bottom:18px;
+}
+
+button{
+width:100%;
+padding:20px;
+border:none;
+border-radius:18px;
+font-size:22px;
+font-weight:700;
+background:#00d26a;
+color:white;
+cursor:pointer;
+}
+
+button:disabled{
+opacity:.6;
+}
+
+.status{
+margin-top:18px;
+font-size:22px;
+color:#00ff88;
+min-height:30px;
+}
+
+.result{
+margin-top:18px;
+background:black;
+padding:18px;
+border-radius:18px;
+white-space:pre-wrap;
+overflow:auto;
+font-size:18px;
+}
+
+small{
+color:#999;
+display:block;
+margin-top:12px;
+}
+</style>
+</head>
+
+<body>
+<div class="wrap">
+
+<div class="card">
+<h1>CNC AI Recognizer</h1>
+<div class="sub">Datei, Bild oder Kamera nutzen</div>
+
+<input
+type="file"
+id="fileInput"
+accept=".png,.jpg,.jpeg,.pdf,.tif,.tiff,image/*"
+capture="environment">
+
+<button onclick="uploadFile()" id="btn">
+Analyse starten
+</button>
+
+<div class="status" id="status"></div>
+</div>
+
+<div class="card">
+<h2 style="font-size:42px;margin-bottom:18px;">Ergebnis</h2>
+<div class="result" id="result">Noch keine Analyse gestartet.</div>
+</div>
+
+</div>
+
+<script>
+async function uploadFile(){
+
+const fileInput=document.getElementById("fileInput");
+const status=document.getElementById("status");
+const result=document.getElementById("result");
+const btn=document.getElementById("btn");
+
+if(fileInput.files.length===0){
+status.innerText="Bitte Datei wählen";
+return;
+}
+
+const file=fileInput.files[0];
+
+const formData=new FormData();
+formData.append("file",file);
+
+status.innerText="Upload läuft...";
+btn.disabled=true;
+result.innerText="Bitte warten...";
+
+try{
+
+const response=await fetch(
+"https://cnc-rebuild.onrender.com/api/recognize",
+{
+method:"POST",
+body:formData
+});
+
+const text=await response.text();
+
+try{
+const json=JSON.parse(text);
+result.innerText=JSON.stringify(json,null,2);
+}
+catch{
+result.innerText=text;
+}
+
+status.innerText="Fertig";
+
+}
+catch(error){
+status.innerText="Fehler";
+result.innerText=error;
+}
+
+btn.disabled=false;
+}
+</script>
+
+</body>
 </html>
