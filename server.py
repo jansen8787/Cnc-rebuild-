@@ -18,7 +18,7 @@ return jsonify({“error”: “Keine Datei empfangen”}), 400
 ```
 uploaded = request.files["file"]
 if uploaded.filename == "":
-    return jsonify({"error": "Keine Datei gewählt"}), 400
+    return jsonify({"error": "Keine Datei gewaehlt"}), 400
 
 temp_path = None
 try:
