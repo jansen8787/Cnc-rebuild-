@@ -79,6 +79,7 @@ h2{
     font-size:18px;
     white-space:pre-wrap;
     word-break:break-word;
+    min-height:120px;
 }
 
 .status{
@@ -130,9 +131,9 @@ const statusBox = document.getElementById("status");
 const resultBox = document.getElementById("result");
 
 fileInput.addEventListener("change", () => {
-    if(fileInput.files.length > 0){
+    if (fileInput.files.length > 0) {
         statusBox.innerText = "Datei gewählt: " + fileInput.files[0].name;
-    }else{
+    } else {
         statusBox.innerText = "Noch keine Datei gewählt.";
     }
 });
@@ -147,6 +148,7 @@ async function uploadFile(){
     const file = fileInput.files[0];
 
     statusBox.innerText = "Analyse läuft...";
+    resultBox.innerText = "";
 
     const formData = new FormData();
     formData.append("file", file);
@@ -158,12 +160,18 @@ async function uploadFile(){
             body:formData
         });
 
-        const text = await response.text();
+        const contentType = response.headers.get("content-type");
 
-        try{
-            const json = JSON.parse(text);
-            resultBox.innerText = JSON.stringify(json,null,2);
-        }catch{
+        if(!response.ok){
+            const errText = await response.text();
+            throw new Error("Serverfehler: " + errText);
+        }
+
+        if(contentType && contentType.includes("application/json")){
+            const json = await response.json();
+            resultBox.innerText = JSON.stringify(json, null, 2);
+        }else{
+            const text = await response.text();
             resultBox.innerText = text;
         }
 
@@ -172,7 +180,7 @@ async function uploadFile(){
     }catch(error){
 
         statusBox.innerText = "Fehler.";
-        resultBox.innerText = error;
+        resultBox.innerText = error.message;
 
     }
 }
