@@ -1,16 +1,20 @@
 """
-stage5_assemble/conflict_resolver.py — Module 2: Stage 5 (FIXED)
-===============================================================
+stage5_assemble/conflict_resolver.py — FINAL STABLE VERSION
+===========================================================
 Resolve overlapping geometry candidates.
 
-Fixes:
-- better multi-conflict handling
-- slot beats circle only with text evidence + confidence
-- deterministic winner logic
-- no silent suppression
-
-Public API unchanged:
-    resolve_conflicts(scaled_candidates, pairs)
+FINAL RULES:
+- No silent deletion.
+- Text-linked candidates preferred.
+- Circle vs Slot:
+    Slot only wins if:
+        1. slot confidence >= threshold
+        2. slot has linked annotation evidence
+    otherwise circle wins.
+- Generic overlaps:
+    linked > unlinked
+    else higher confidence wins
+- If no conflicts: unchanged return
 """
 
 from __future__ import annotations
@@ -20,56 +24,85 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from m2types import SuppressedCandidate
+from m2types import ScaledCandidate, SuppressedCandidate
 
 
-OVERLAP_THRESHOLD = 0.35
-SLOT_WIN_CONF = 0.70
+# ---------------------------------------------------------
+# Constants
+# ---------------------------------------------------------
+
+_OVERLAP_THRESHOLD = 0.35
+_SLOT_WINS_CONFIDENCE = 0.70
 
 
-# ---------------------------------------------------------------------------
-# Geometry helpers
-# ---------------------------------------------------------------------------
+# ---------------------------------------------------------
+# Bounding boxes
+# ---------------------------------------------------------
 
-def _bbox(sc):
+def _bbox_of(sc: ScaledCandidate) -> dict:
     g = sc.geometry_mm
-    k = sc.candidate.kind
+    kind = sc.candidate.kind
 
-    cx = g.get("cx", 0.0) or 0.0
-    cy = g.get("cy", 0.0) or 0.0
+    cx = g.get("cx", 0.0)
+    cy = g.get("cy", 0.0)
 
-    if k == "circle":
-        r = g.get("radius", 0.0) or 0.0
-        return (cx - r, cy - r, cx + r, cy + r)
+    if kind == "circle":
+        r = g.get("radius", 0.0)
+        return {
+            "x": cx - r,
+            "y": cy - r,
+            "w": r * 2,
+            "h": r * 2,
+        }
 
-    if k == "slot":
-        l = g.get("length", 0.0) or 0.0
-        w = g.get("width", 0.0) or 0.0
-        return (cx - l / 2, cy - w / 2, cx + l / 2, cy + w / 2)
+    if kind == "slot":
+        l = g.get("length", 0.0)
+        w = g.get("width", 0.0)
+        return {
+            "x": cx - l / 2,
+            "y": cy - w / 2,
+            "w": l,
+            "h": w,
+        }
 
-    if k == "rectangle":
-        w = g.get("width", 0.0) or 0.0
-        h = g.get("height", 0.0) or 0.0
-        return (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+    if kind == "rectangle":
+        w = g.get("width", 0.0)
+        h = g.get("height", 0.0)
+        return {
+            "x": cx - w / 2,
+            "y": cy - h / 2,
+            "w": w,
+            "h": h,
+        }
 
-    return (cx - 1, cy - 1, cx + 1, cy + 1)
+    area = sc.candidate.evidence.get("area_px", 100.0)
+    side = math.sqrt(area)
+
+    return {
+        "x": cx - side / 2,
+        "y": cy - side / 2,
+        "w": side,
+        "h": side,
+    }
 
 
-def _iou(a, b):
-    x1 = max(a[0], b[0])
-    y1 = max(a[1], b[1])
-    x2 = min(a[2], b[2])
-    y2 = min(a[3], b[3])
+def _iou(a: dict, b: dict) -> float:
+    ax2 = a["x"] + a["w"]
+    ay2 = a["y"] + a["h"]
 
-    iw = max(0.0, x2 - x1)
-    ih = max(0.0, y2 - y1)
+    bx2 = b["x"] + b["w"]
+    by2 = b["y"] + b["h"]
+
+    ix1 = max(a["x"], b["x"])
+    iy1 = max(a["y"], b["y"])
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+
+    iw = max(0.0, ix2 - ix1)
+    ih = max(0.0, iy2 - iy1)
 
     inter = iw * ih
-
-    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
-    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
-
-    union = area_a + area_b - inter
+    union = a["w"] * a["h"] + b["w"] * b["h"] - inter
 
     if union <= 0:
         return 0.0
@@ -77,103 +110,125 @@ def _iou(a, b):
     return inter / union
 
 
-# ---------------------------------------------------------------------------
-# Winner logic
-# ---------------------------------------------------------------------------
+# ---------------------------------------------------------
+# Decision logic
+# ---------------------------------------------------------
 
-def _linked_ids(pairs):
-    return {p.candidate.candidate.id for p in pairs}
+def _resolve_pair(a, b, linked_ids):
+    kind_a = a.candidate.kind
+    kind_b = b.candidate.kind
+
+    conf_a = a.candidate.confidence
+    conf_b = b.candidate.confidence
+
+    a_linked = a.candidate.id in linked_ids
+    b_linked = b.candidate.id in linked_ids
+
+    # ---------------------------------------------
+    # Circle vs Slot
+    # ---------------------------------------------
+    if {kind_a, kind_b} == {"circle", "slot"}:
+        slot = a if kind_a == "slot" else b
+        circ = a if kind_a == "circle" else b
+
+        slot_linked = slot.candidate.id in linked_ids
+
+        if (
+            slot.candidate.confidence >= _SLOT_WINS_CONFIDENCE
+            and slot_linked
+        ):
+            return (
+                slot,
+                circ,
+                "slot_beats_circle(linked_high_conf)"
+            )
+
+        return (
+            circ,
+            slot,
+            "circle_beats_slot"
+        )
+
+    # ---------------------------------------------
+    # Generic text-linked priority
+    # ---------------------------------------------
+    if a_linked and not b_linked:
+        return a, b, "text_linked_wins"
+
+    if b_linked and not a_linked:
+        return b, a, "text_linked_wins"
+
+    # ---------------------------------------------
+    # Confidence
+    # ---------------------------------------------
+    if conf_a >= conf_b:
+        return a, b, "higher_confidence"
+
+    return b, a, "higher_confidence"
 
 
-def _winner(a, b, linked):
-    ka = a.candidate.kind
-    kb = b.candidate.kind
-
-    ca = a.candidate.confidence
-    cb = b.candidate.confidence
-
-    ida = a.candidate.id
-    idb = b.candidate.id
-
-    a_link = ida in linked
-    b_link = idb in linked
-
-    # slot vs circle special rule
-    if {ka, kb} == {"slot", "circle"}:
-        slot = a if ka == "slot" else b
-        circ = b if ka == "slot" else a
-
-        slot_link = slot.candidate.id in linked
-
-        if slot.candidate.confidence >= SLOT_WIN_CONF and slot_link:
-            return slot, circ, "slot_beats_circle"
-
-        return circ, slot, "circle_beats_slot"
-
-    # linked wins
-    if a_link and not b_link:
-        return a, b, "text_linked"
-
-    if b_link and not a_link:
-        return b, a, "text_linked"
-
-    # confidence wins
-    if ca > cb:
-        return a, b, "higher_conf"
-
-    if cb > ca:
-        return b, a, "higher_conf"
-
-    # stable fallback by id
-    if ida <= idb:
-        return a, b, "stable_id"
-
-    return b, a, "stable_id"
-
-
-# ---------------------------------------------------------------------------
+# ---------------------------------------------------------
 # Public API
-# ---------------------------------------------------------------------------
+# ---------------------------------------------------------
 
-def resolve_conflicts(scaled_candidates, pairs):
+def resolve_conflicts(
+    scaled_candidates: list,
+    pairs: list,
+):
     if len(scaled_candidates) <= 1:
         return scaled_candidates, []
 
-    linked = _linked_ids(pairs)
+    linked_ids = {
+        p.candidate.candidate.id
+        for p in pairs
+    }
 
-    active = list(scaled_candidates)
+    conflicts = []
+
+    for i in range(len(scaled_candidates)):
+        box_i = _bbox_of(scaled_candidates[i])
+
+        for j in range(i + 1, len(scaled_candidates)):
+            box_j = _bbox_of(scaled_candidates[j])
+
+            overlap = _iou(box_i, box_j)
+
+            if overlap >= _OVERLAP_THRESHOLD:
+                conflicts.append((i, j, overlap))
+
+    if not conflicts:
+        return scaled_candidates, []
+
+    suppressed_idx = set()
     suppressed = []
 
-    changed = True
+    for i, j, overlap in conflicts:
+        if i in suppressed_idx or j in suppressed_idx:
+            continue
 
-    while changed:
-        changed = False
+        cand_a = scaled_candidates[i]
+        cand_b = scaled_candidates[j]
 
-        for i in range(len(active)):
-            if changed:
-                break
+        winner, loser, reason = _resolve_pair(
+            cand_a,
+            cand_b,
+            linked_ids
+        )
 
-            for j in range(i + 1, len(active)):
-                a = active[i]
-                b = active[j]
+        loser_idx = i if loser is cand_a else j
+        suppressed_idx.add(loser_idx)
 
-                ov = _iou(_bbox(a), _bbox(b))
+        suppressed.append(
+            SuppressedCandidate(
+                candidate=loser,
+                reason=f"conflict_resolution: {reason} (iou={overlap:.2f})"
+            )
+        )
 
-                if ov < OVERLAP_THRESHOLD:
-                    continue
+    kept = [
+        sc
+        for idx, sc in enumerate(scaled_candidates)
+        if idx not in suppressed_idx
+    ]
 
-                keep, lose, reason = _winner(a, b, linked)
-
-                active.remove(lose)
-
-                suppressed.append(
-                    SuppressedCandidate(
-                        candidate=lose,
-                        reason=f"conflict_resolution: {reason} (iou={ov:.2f})",
-                    )
-                )
-
-                changed = True
-                break
-
-    return active, suppressed
+    return kept, suppressed
