@@ -6,170 +6,175 @@
 <title>CNC AI Recognizer</title>
 
 <style>
-*{
-margin:0;
-padding:0;
-box-sizing:border-box;
-font-family:Arial,Helvetica,sans-serif;
-}
-
 body{
-background:#0f0f0f;
-color:white;
-padding:20px;
+    margin:0;
+    padding:0;
+    background:#050505;
+    color:white;
+    font-family:Arial,Helvetica,sans-serif;
 }
 
 .wrap{
-max-width:700px;
-margin:auto;
+    max-width:700px;
+    margin:0 auto;
+    padding:24px;
 }
 
 .card{
-background:#181818;
-border-radius:22px;
-padding:24px;
-margin-bottom:22px;
+    background:#111;
+    border-radius:24px;
+    padding:24px;
+    margin-bottom:24px;
 }
 
 h1{
-font-size:54px;
-margin-bottom:18px;
-font-weight:800;
+    font-size:58px;
+    line-height:0.95;
+    margin:0 0 20px 0;
+    font-weight:900;
 }
 
 .sub{
-font-size:18px;
-color:#cfcfcf;
-margin-bottom:24px;
+    font-size:22px;
+    color:#cfcfcf;
+    margin-bottom:28px;
 }
 
 input[type=file]{
-width:100%;
-background:#222;
-padding:14px;
-border-radius:14px;
-color:white;
-margin-bottom:18px;
+    width:100%;
+    background:#1b1b1b;
+    color:white;
+    border:none;
+    border-radius:18px;
+    padding:18px;
+    font-size:18px;
+    margin-bottom:22px;
 }
 
 button{
-width:100%;
-padding:20px;
-border:none;
-border-radius:18px;
-font-size:22px;
-font-weight:700;
-background:#00d26a;
-color:white;
-cursor:pointer;
+    width:100%;
+    border:none;
+    border-radius:22px;
+    padding:26px;
+    font-size:34px;
+    font-weight:800;
+    background:#00d86a;
+    color:white;
+    cursor:pointer;
 }
 
-button:disabled{
-opacity:.6;
+button:active{
+    transform:scale(.99);
 }
 
-.status{
-margin-top:18px;
-font-size:22px;
-color:#00ff88;
-min-height:30px;
+h2{
+    font-size:54px;
+    margin:0 0 20px 0;
 }
 
 .result{
-margin-top:18px;
-background:black;
-padding:18px;
-border-radius:18px;
-white-space:pre-wrap;
-overflow:auto;
-font-size:18px;
+    background:black;
+    border-radius:20px;
+    padding:22px;
+    font-size:18px;
+    white-space:pre-wrap;
+    word-break:break-word;
 }
 
-small{
-color:#999;
-display:block;
-margin-top:12px;
+.status{
+    margin-top:16px;
+    font-size:22px;
+    color:#cccccc;
 }
 </style>
 </head>
 
 <body>
+
 <div class="wrap">
 
 <div class="card">
-<h1>CNC AI Recognizer</h1>
-<div class="sub">Datei, Bild oder Kamera nutzen</div>
+<h1>CNC AI<br>Recognizer</h1>
+
+<div class="sub">
+Datei, Bild, Galerie oder Kamera nutzen
+</div>
 
 <input
 type="file"
 id="fileInput"
-accept=".png,.jpg,.jpeg,.pdf,.tif,.tiff,image/*"
-capture="environment">
+accept="image/*,.pdf"
+>
 
-<button onclick="uploadFile()" id="btn">
+<button onclick="uploadFile()">
 Analyse starten
 </button>
 
-<div class="status" id="status"></div>
+<div class="status" id="status">
+Noch keine Datei gewählt.
+</div>
 </div>
 
 <div class="card">
-<h2 style="font-size:42px;margin-bottom:18px;">Ergebnis</h2>
-<div class="result" id="result">Noch keine Analyse gestartet.</div>
+<h2>Ergebnis</h2>
+<div class="result" id="result">
+Noch keine Analyse gestartet.
+</div>
 </div>
 
 </div>
 
 <script>
-async function uploadFile(){
+const fileInput = document.getElementById("fileInput");
+const statusBox = document.getElementById("status");
+const resultBox = document.getElementById("result");
 
-const fileInput=document.getElementById("fileInput");
-const status=document.getElementById("status");
-const result=document.getElementById("result");
-const btn=document.getElementById("btn");
-
-if(fileInput.files.length===0){
-status.innerText="Bitte Datei wählen";
-return;
-}
-
-const file=fileInput.files[0];
-
-const formData=new FormData();
-formData.append("file",file);
-
-status.innerText="Upload läuft...";
-btn.disabled=true;
-result.innerText="Bitte warten...";
-
-try{
-
-const response=await fetch(
-"https://cnc-rebuild.onrender.com/api/recognize",
-{
-method:"POST",
-body:formData
+fileInput.addEventListener("change", () => {
+    if(fileInput.files.length > 0){
+        statusBox.innerText = "Datei gewählt: " + fileInput.files[0].name;
+    }else{
+        statusBox.innerText = "Noch keine Datei gewählt.";
+    }
 });
 
-const text=await response.text();
+async function uploadFile(){
 
-try{
-const json=JSON.parse(text);
-result.innerText=JSON.stringify(json,null,2);
-}
-catch{
-result.innerText=text;
-}
+    if(fileInput.files.length === 0){
+        statusBox.innerText = "Bitte zuerst Datei wählen.";
+        return;
+    }
 
-status.innerText="Fertig";
+    const file = fileInput.files[0];
 
-}
-catch(error){
-status.innerText="Fehler";
-result.innerText=error;
-}
+    statusBox.innerText = "Analyse läuft...";
 
-btn.disabled=false;
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try{
+
+        const response = await fetch("/api/recognize", {
+            method:"POST",
+            body:formData
+        });
+
+        const text = await response.text();
+
+        try{
+            const json = JSON.parse(text);
+            resultBox.innerText = JSON.stringify(json,null,2);
+        }catch{
+            resultBox.innerText = text;
+        }
+
+        statusBox.innerText = "Fertig.";
+
+    }catch(error){
+
+        statusBox.innerText = "Fehler.";
+        resultBox.innerText = error;
+
+    }
 }
 </script>
 
