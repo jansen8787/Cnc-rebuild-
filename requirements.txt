@@ -3,3 +3,6 @@ gunicorn==22.0.0
 pillow
 opencv-python-headless
 numpy
+pdfminer.six
+pdf2image
+pytesseract
