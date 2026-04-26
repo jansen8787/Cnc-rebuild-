@@ -3,9 +3,9 @@ from pathlib import Path
 import tempfile
 import traceback
 import os
-import json
 
 app = Flask(__name__, static_folder=".", static_url_path="")
+
 
 @app.route("/")
 def home():
@@ -32,13 +32,29 @@ def recognize():
             uploaded.save(tmp.name)
             temp_path = Path(tmp.name)
 
-        from module2.main import run_pipeline
+        try:
+            from module2.main import run_pipeline
+        except Exception as e:
+            return jsonify({
+                "error": "Importfehler module2.main",
+                "type": type(e).__name__,
+                "message": str(e),
+                "traceback": traceback.format_exc()
+            }), 500
 
-        result = run_pipeline(temp_path)
+        try:
+            result = run_pipeline(temp_path)
+        except Exception as e:
+            return jsonify({
+                "error": "Pipeline Crash",
+                "type": type(e).__name__,
+                "message": str(e),
+                "traceback": traceback.format_exc()
+            }), 500
 
         try:
             return jsonify(result)
-        except:
+        except Exception:
             return jsonify({
                 "success": True,
                 "raw_result": str(result)
@@ -56,7 +72,7 @@ def recognize():
         try:
             if temp_path and temp_path.exists():
                 os.remove(temp_path)
-        except:
+        except Exception:
             pass
 
 
